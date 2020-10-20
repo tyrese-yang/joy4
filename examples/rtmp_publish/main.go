@@ -19,11 +19,12 @@ func main() {
 	inputFile := flag.String("i", "projectindex.flv", "input file")
 	dstUrl := flag.String("o", "rtmp://localhost:1936/app/publish", "output url")
 	debug := flag.Bool("v", false, "verbose")
+	quic := flag.Bool("q", false, "rtmp over quic")
 	flag.Parse()
 	rtmp.Debug = *debug
+	rtmp.UseQuic = *quic
 	file, _ := avutil.Open(*inputFile)
 	conn, _ := rtmp.Dial(*dstUrl)
-	// conn, _ := avutil.Create("rtmp://localhost:1936/app/publish")
 
 	demuxer := &pktque.FilterDemuxer{Demuxer: file, Filter: &pktque.Walltime{}}
 	avutil.CopyFile(conn, demuxer)

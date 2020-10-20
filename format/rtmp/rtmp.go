@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	quicconn "github.com/marten-seemann/quic-conn"
+	"github.com/lucas-clemente/quic-go"
 
 	"github.com/tyrese/joy4/av"
 	"github.com/tyrese/joy4/av/avutil"
@@ -29,6 +29,7 @@ import (
 )
 
 var Debug bool
+var UseQuic bool
 
 func ParseURL(uri string) (u *url.URL, err error) {
 	if u, err = url.Parse(uri); err != nil {
@@ -50,14 +51,20 @@ func DialTimeout(uri string, timeout time.Duration) (conn *Conn, err error) {
 		return
 	}
 
-	if strings.Contains(uri, "quic=1") {
-		tlsConf := &tls.Config{InsecureSkipVerify: true}
-		netconn, err := quicconn.Dial(u.Host, tlsConf)
-		if err != nil {
-			panic(err)
+	if UseQuic {
+		tlsConf := &tls.Config{
+			InsecureSkipVerify: true,
+			NextProtos:         []string{"rtmp-over-quic", "wq-vvv-01"},
 		}
 
-		conn = NewConn(netconn)
+		// quic connection
+		quicSession, err := quic.DialAddr(u.Host, tlsConf, nil)
+		if err != nil {
+			return nil, err
+		}
+		qc, _ := newConn(quicSession)
+
+		conn = NewConn(qc)
 
 		fmt.Println("quic connect to " + u.Host)
 	} else {
@@ -104,36 +111,27 @@ func (self *Server) handleConn(conn *Conn) (err error) {
 	return
 }
 
-func generateTLSConfig() (*tls.Config, error) {
-	key, err := rsa.GenerateKey(rand.Reader, 2048)
+func generateTLSConfig() *tls.Config {
+	key, err := rsa.GenerateKey(rand.Reader, 1024)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageDigitalSignature,
-	}
+	template := x509.Certificate{SerialNumber: big.NewInt(1)}
 	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &key.PublicKey, key)
 	if err != nil {
-		fmt.Println(err)
-		return nil, err
+		panic(err)
 	}
-	keyPEM := pem.EncodeToMemory(&pem.Block{
-		Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key),
-	})
-	b := pem.Block{Type: "CERTIFICATE", Bytes: certDER}
-	certPEM := pem.EncodeToMemory(&b)
+	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)})
+	certPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certDER})
 
 	tlsCert, err := tls.X509KeyPair(certPEM, keyPEM)
 	if err != nil {
-		return nil, err
+		panic(err)
 	}
-
 	return &tls.Config{
 		Certificates: []tls.Certificate{tlsCert},
-	}, nil
+		NextProtos:   []string{"rtmp-over-quic"},
+	}
 }
 
 func (self *Server) ListenAndServe() (err error) {
@@ -143,14 +141,25 @@ func (self *Server) ListenAndServe() (err error) {
 	}
 
 	if self.Quic {
-		tlsConf, err := generateTLSConfig()
+		tlsConf := generateTLSConfig()
+
+		udpAddr, err := net.ResolveUDPAddr("udp", addr)
 		if err != nil {
-			panic(err)
+			return &net.OpError{Op: "listen", Net: "udp", Source: nil, Addr: nil, Err: err}
+		}
+		conn, err := net.ListenUDP("udp", udpAddr)
+		if err != nil {
+			return err
 		}
 
-		quicListener, err := quicconn.Listen("udp", addr, tlsConf)
+		ln, err := quic.Listen(conn, tlsConf, nil)
 		if err != nil {
-			panic(err)
+			return err
+		}
+
+		var quicListener net.Listener
+		quicListener = &qserver{
+			quicServer: ln,
 		}
 
 		fmt.Println("quic listen on" + addr)
