@@ -66,7 +66,9 @@ func DialTimeout(uri string, timeout time.Duration) (conn *Conn, err error) {
 
 		conn = NewConn(qc)
 
-		fmt.Println("quic connect to " + u.Host)
+		if Debug {
+			fmt.Println("quic connect to " + u.Host)
+		}
 	} else {
 		dailer := net.Dialer{Timeout: timeout}
 		var netconn net.Conn

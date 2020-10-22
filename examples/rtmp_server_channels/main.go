@@ -75,7 +75,7 @@ func (self *FrameDropper) ModifyPacket(pkt *av.Packet, streams []av.CodecData, v
 }
 
 func main() {
-	quic := flag.Bool("quic", false, "false")
+	quic := flag.Bool("q", false, "listen 1935 for quic")
 	debug := flag.Bool("v", false, "verbose")
 	flag.Parse()
 	rtmp.Debug = *debug
